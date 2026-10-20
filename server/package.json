@@ -1,0 +1,16 @@
+{
+  "name": "senai-rush-online",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Lobby + relay server for SENAI Rush online multiplayer. Also serves the static game build.",
+  "type": "module",
+  "main": "server.js",
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test.mjs"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

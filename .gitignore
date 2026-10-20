@@ -1,0 +1,7 @@
+node_modules/
+.work/
+.claude/
+.serena/
+senai-rush-netlify.backup/
+senai-rush-offline/
+/lap.png

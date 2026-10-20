@@ -1,0 +1,10 @@
+# Render Blueprint: one Node web service serves the game and the online lobby (WebSocket at /ws).
+services:
+  - type: web
+    name: senai-rush
+    runtime: node
+    plan: free
+    rootDir: server
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
