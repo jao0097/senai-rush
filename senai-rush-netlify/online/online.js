@@ -9,6 +9,11 @@
 // races the winning track. Each client simulates its own kart and streams its
 // pose; remote karts are puppets that follow the stream. The host also streams
 // the AI karts so everyone sees the same field.
+//
+// Items: whoever uses an item broadcasts it and every client replays it from
+// that racer's puppet, so bees, bombs, wheels, taffy, bolts, shields... show up
+// on every screen. Hits are decided by the victim's client (the only one that
+// simulates that kart for real); on puppets, projectiles are visual only.
 
 const params = new URLSearchParams(location.search);
 // Set window.SENAI_RUSH_SERVER (or ?server=wss://...) when the game is hosted
@@ -24,6 +29,13 @@ const INTERP_MS = 110; // render remote karts this far in the past
 const EXTRAPOLATE_MS = 250;
 const SNAP_DIST = 8;
 const NAME_KEY = 'senai-rush-online-name';
+const MAX_PLAYERS = 8; // keep in sync with server/server.js
+// grid slots for humans, in lobby order (middle of the grid first, like offline)
+const HUMAN_SLOTS = [3, 2, 4, 5, 1, 6, 0, 7];
+
+// Shared game data from the entry chunk: same URL as index.html's script, so
+// this resolves to the already-loaded module instance (tuning + roster).
+const core = import('../assets/index-BgxqOEwe.js').then((m) => ({ tuning: m.or, roster: m.lr }));
 
 const $ = (s) =>
   String(s ?? '').replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
@@ -62,8 +74,10 @@ root.id = 'online';
 const chip = document.createElement('div');
 chip.id = 'online-chip';
 
-waitForGame().then((g) => {
+let CORE;
+Promise.all([waitForGame(), core]).then(([g, c]) => {
   G = g;
+  CORE = c;
   document.body.append(root, chip);
   addTitleButton();
   patchGame();
@@ -226,8 +240,8 @@ function onMessage(m) {
     case 'a':
       for (const k of m.k) pushSample(`ai${k[0]}`, m.from, m.ts, k.slice(1));
       break;
-    case 'hit':
-      applyRemoteHit(m);
+    case 'i':
+      applyRemoteItem(m);
       break;
     case 'abort':
       if (state.net) leaveRace();
@@ -338,7 +352,7 @@ function roomHtml(room) {
   if (room.phase === 'select') return selectHtml(room);
   if (room.phase === 'reveal' && room.race) return revealHtml(room);
   const racing = room.phase === 'race';
-  const slots = Array.from({ length: 4 - room.players.length }, () => '<div class="on-player" style="opacity:.35"><span class="on-av"></span>Vaga livre</div>').join('');
+  const slots = Array.from({ length: Math.max(0, MAX_PLAYERS - room.players.length) }, () => '<div class="on-player" style="opacity:.35"><span class="on-av"></span>Vaga livre</div>').join('');
   return `<div class="on-panel">
     <div class="on-row" style="justify-content:space-between">
       <h2>Lobby</h2>
@@ -352,7 +366,7 @@ function roomHtml(room) {
       <p class="on-muted" style="max-width:340px">Manda esse código pros amigos. Eles clicam em <b>Online → Entrar com código</b>.</p>
     </div>
     <div class="on-box on-col">
-      <h3>Jogadores ${room.players.length}/4</h3>
+      <h3>Jogadores ${room.players.length}/${MAX_PLAYERS}</h3>
       <div class="on-players">${room.players.map((p) => playerRow(p, room, racing && p.inRace ? '<span class="on-tag">CORRENDO</span>' : '')).join('')}${slots}</div>
     </div>
     <div class="on-row">
@@ -561,11 +575,6 @@ function patchActions() {
   }
 }
 
-const charCache = new Map();
-const cacheChars = (game) => {
-  for (const r of game.racers) charCache.set(r.character.id, r.character);
-};
-
 function patchGame() {
   const proto = Object.getPrototypeOf(G.game);
   if (proto.__online) return;
@@ -574,44 +583,9 @@ function patchGame() {
   const spawn = proto.spawn;
   proto.spawn = function (chars) {
     const net = state.pendingSpawn;
-    if (!net) {
-      spawn.call(this, chars);
-      cacheChars(this);
-      return;
-    }
+    if (!net) return spawn.call(this, chars);
     state.pendingSpawn = null;
-    for (const c of chars) charCache.set(c.id, c);
-    // character objects aren't exported; harvest them from attract-mode grids
-    for (let i = 0; i < 40 && net.race.order.some((o) => !charCache.has(o.char)); i += 1) {
-      spawn.call(this, []);
-      cacheChars(this);
-    }
-    const grid = net.race.order.map((o) => charCache.get(o.char) ?? chars[0]);
-    const random = Math.random;
-    Math.random = mulberry32(net.race.seed); // same AI picks on every client
-    try {
-      spawn.call(this, grid);
-    } finally {
-      Math.random = random;
-    }
-    let me;
-    for (const r of this.racers) {
-      if (r.playerIndex > 0) {
-        const o = net.race.order[r.playerIndex - 1];
-        if (o.id === state.you) {
-          me = r;
-          r.playerIndex = 1;
-          continue;
-        }
-        r.isPlayer = false;
-        r.playerIndex = 0;
-        r.driver = this.playerDriver;
-        makePuppet(r, `p${o.id}`, net);
-      } else if (!net.isHost) makePuppet(r, `ai${r.id}`, net);
-    }
-    this.locals = [me];
-    this.player = me;
-    this.updateStandings();
+    spawnNet(this, net, spawn);
   };
 
   const wrapSkip = (name) => {
@@ -633,37 +607,112 @@ function patchGame() {
     if (!state.net) skipIntro.call(this); // keep everyone's countdown aligned
   };
 
-  // items only exist locally; forward hits on remote karts to their owner
-  const onHit = proto.onHit;
-  proto.onHit = function (target, source, kind) {
-    onHit.call(this, target, source, kind);
-    if (!state.net || remoteHit || !target?.net) return;
-    const key = target.net.key;
-    if (key.startsWith('p')) send({ t: 'hit', to: key.slice(1), kind });
-    else send({ t: 'hit', to: 'ai', ai: target.id, kind });
+  // Item uses by karts this client simulates (me, plus the AI on the host)
+  // are broadcast so every other client can replay them on the puppet.
+  const items = Object.getPrototypeOf(G.game.items);
+  const use = items.use;
+  items.use = function (racer, ordered) {
+    if (!state.net || remoteItem || racer?.net) return use.call(this, racer, ordered);
+    const i = ordered.indexOf(racer);
+    const target = racer.item === 'bee' && i > 0 ? ordered[i - 1] : null;
+    const item = use.call(this, racer, ordered);
+    if (item) send({ t: 'i', k: keyOf(racer), item, tg: target ? keyOf(target) : null });
+    return item;
   };
 }
 
-let remoteHit = false;
-function applyRemoteHit(m) {
+// Builds the online grid: up to 8 humans in lobby order, AI fills up to the
+// normal field size. Every client gets the same layout and AI characters.
+function spawnNet(game, net, spawn) {
+  if (!game.racers.length) spawn.call(game, []);
+  const Racer = game.racers[0].constructor;
+  const { tuning, roster } = CORE;
+  game.clearRace();
+  const order = net.race.order;
+  const total = Math.max(tuning.race.racers, order.length);
+  const human = new Map(order.map((o, i) => [HUMAN_SLOTS[i], o]));
+  const rand = mulberry32(net.race.seed);
+  const taken = new Set(order.map((o) => o.char));
+  const pool = roster.filter((c) => !taken.has(c.id));
+  for (let i = pool.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(rand() * (i + 1));
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
+  const skills = tuning.ai.levels[game.level].skills;
+  let nextAi = 0;
+  let me;
+  for (let slot = 0; slot < total; slot += 1) {
+    const o = human.get(slot);
+    const ai = o ? 0 : nextAi++;
+    const char = o ? (roster.find((c) => c.id === o.char) ?? roster[0]) : (pool[ai % Math.max(1, pool.length)] ?? roster[slot % roster.length]);
+    const d = o ? 0 : Math.min(skills.length - 1, ai);
+    const r = new Racer(slot, char, !!o, game.physics, game.track, game.track.gridSlot(slot), skills[d]);
+    game.scene.add(r.view.root, r.view.shadow, ...r.trails.map((t) => t.mesh));
+    r.aiUseShortcut = rand() < tuning.ai.shortcutChance[Math.min(4, d)];
+    game.racers.push(r);
+    if (!o) {
+      if (!net.isHost) makePuppet(r, `ai${r.id}`, net);
+    } else if (o.id === state.you) {
+      me = r;
+      r.playerIndex = 1;
+    } else {
+      r.isPlayer = false;
+      r.driver = game.playerDriver;
+      makePuppet(r, `p${o.id}`, net);
+    }
+  }
+  game.locals = [me];
+  game.player = me;
+  game.ordered = [...game.racers];
+  game.updateStandings();
+}
+
+// network key of a racer as seen by everyone: p<id> for humans, ai<id> for AI
+function keyOf(racer) {
+  if (racer.net) return racer.net.key;
+  if (racer === G.game.player) return `p${state.you}`;
+  return `ai${racer.id}`;
+}
+
+function racerByKey(key) {
   const game = G.game;
-  if (!state.net || !game?.racers) return;
-  const target = m.to === 'ai' ? game.racers.find((r) => r.id === m.ai && !r.net) : game.player;
-  if (!target || target.shielded || target.invincible || target.finished) return;
-  target.kart.spinOut(m.kind === 'bolt' ? 0.45 : 0.7, 0.35);
-  const source = state.net.puppets.get(`p${m.from}`);
-  remoteHit = true;
+  if (!key || !state.net || !game?.racers) return null;
+  if (key === `p${state.you}`) return game.player;
+  const puppet = state.net.puppets.get(key);
+  if (puppet) return puppet;
+  // host: AI karts are simulated here, not puppets
+  if (key.startsWith('ai')) return game.racers.find((r) => !r.net && !r.isPlayer && `ai${r.id}` === key) ?? null;
+  return null;
+}
+
+let remoteItem = false;
+function applyRemoteItem(m) {
+  const game = G.game;
+  const racer = racerByKey(m.k);
+  if (!racer?.net || typeof m.item !== 'string') return;
+  if (game.mode !== 'playing' && game.mode !== 'ended' && game.mode !== 'paused') return;
+  racer.item = m.item;
+  racer.charges = 1; // triple: one pepper per message
+  // bee chases whoever was ahead on the sender's screen
+  const target = racerByKey(m.tg);
+  const ordered = m.item === 'bee' ? (target && target !== racer ? [target, racer] : [racer]) : game.ordered;
+  remoteItem = true;
   try {
-    game.onHit(target, source, m.kind);
+    game.items.use(racer, ordered);
   } finally {
-    remoteHit = false;
+    remoteItem = false;
+    racer.item = null;
+    racer.charges = 0;
   }
 }
 
 function makePuppet(racer, key, net) {
   racer.net = { key };
+  racer.playerIndex = 0;
   net.puppets.set(key, racer);
   const k = racer.kart;
+  // the owner's client applies hits to this kart; here items are only visual
+  k.spinOut = k.impulse = k.stick = () => {};
   k.step = function (dt) {
     this.prevPosition.copy(this.position);
     this.prevYaw = this.yaw;
@@ -693,14 +742,25 @@ function makePuppet(racer, key, net) {
     this.boostTime = s[6] ? 0.2 : 0;
     this.spinTime = s[7];
     this.grounded = true;
+    if (s.length > 8) {
+      racer.shieldTime = s[8];
+      racer.starTime = s[9];
+      racer.shrinkTime = s[10];
+      racer.goo = s[11];
+    }
   };
 }
 
-// pose: [x, y, z, yaw, speed, drifting, boosting, spinTime]
-function poseOf(kart) {
+// pose: [x, y, z, yaw, speed, drifting, boosting, spinTime,
+//        shieldTime, starTime, shrinkTime, goo]
+function poseOf(racer) {
+  const kart = racer.kart;
   const p = kart.position;
   const r = (n, d = 100) => Math.round(n * d) / d;
-  return [r(p.x), r(p.y), r(p.z), r(kart.yaw, 1000), r(kart.speed), kart.drifting ? 1 : 0, kart.boostTime > 0 ? 1 : 0, r(kart.spinTime)];
+  return [
+    r(p.x), r(p.y), r(p.z), r(kart.yaw, 1000), r(kart.speed), kart.drifting ? 1 : 0, kart.boostTime > 0 ? 1 : 0, r(kart.spinTime),
+    r(racer.shieldTime), r(racer.starTime), r(racer.shrinkTime), r(racer.goo),
+  ];
 }
 
 function sendPose() {
@@ -709,9 +769,9 @@ function sendPose() {
   if (!net?.started || !game?.player) return;
   if (game.mode !== 'playing' && game.mode !== 'ended' && game.mode !== 'paused') return;
   const ts = Math.round(performance.now());
-  send({ t: 's', ts, k: poseOf(game.player.kart) });
+  send({ t: 's', ts, k: poseOf(game.player) });
   if (net.isHost) {
-    const ai = game.racers.filter((r) => !r.isPlayer && !r.net).map((r) => [r.id, ...poseOf(r.kart)]);
+    const ai = game.racers.filter((r) => !r.isPlayer && !r.net).map((r) => [r.id, ...poseOf(r)]);
     if (ai.length) send({ t: 'a', ts, k: ai });
   }
   if (game.player.finished && !net.finishedSent) {

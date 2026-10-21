@@ -45,7 +45,9 @@ def main() -> None:
             # Face textures are loaded by THREE.TextureLoader; file:// images taint WebGL.
             text = re.sub(
                 r"([`\"'])\./(assets/[^`\"']+\.(?:png|webp))\1",
-                lambda m: m.group(1) + data_uri(SRC / m.group(2)) + m.group(1),
+                # optional faces (e.g. isaac) may not exist yet: leave the path, the loader falls back
+                lambda m: m.group(1) + data_uri(SRC / m.group(2)) + m.group(1)
+                if (SRC / m.group(2)).exists() else m.group(0),
                 text,
             )
             # Everything ends up in one bundle, so Vite's dep preloading (which

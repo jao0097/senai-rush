@@ -12,7 +12,7 @@ const STATIC_DIR = resolve(
   process.env.STATIC_DIR ||
     join(fileURLToPath(new URL('.', import.meta.url)), '..', 'senai-rush-netlify'),
 );
-const MAX_PLAYERS = 4; // the game has 4 human grid slots
+const MAX_PLAYERS = 8; // online grid grows to fit everyone (see online.js spawnNet)
 const SELECT_MS = Number(process.env.SELECT_MS) || 60_000;
 const REVEAL_MS = 4_000; // "track chosen" screen before the race intro starts
 const RACE_TIMEOUT_MS = 10 * 60_000;
@@ -243,15 +243,14 @@ wss.on('connection', (ws) => {
     }
     if (!m || typeof m.t !== 'string') return;
 
-    // hot path: race traffic is relayed untouched (sender id stamped)
-    if (room && me && (m.t === 's' || m.t === 'a' || m.t === 'hit')) {
+    // hot path: race traffic is relayed untouched (sender id stamped).
+    // s = my pose, a = AI poses (host only), i = item used (replayed by everyone)
+    if (room && me && (m.t === 's' || m.t === 'a' || m.t === 'i')) {
       if (room.phase !== 'race' && room.phase !== 'reveal') return;
       if (m.t === 'a' && room.host !== me.id) return;
+      if (m.t === 'i' && typeof m.k === 'string' && m.k.startsWith('ai') && room.host !== me.id) return;
       m.from = id;
-      if (m.t === 'hit') {
-        const target = m.to === 'ai' ? room.players.find((p) => p.id === room.host) : room.players.find((p) => p.id === m.to);
-        if (target) send(target.ws, m);
-      } else broadcast(room, m, id);
+      broadcast(room, m, id);
       return;
     }
 
@@ -282,7 +281,7 @@ wss.on('connection', (ws) => {
         if (room) return;
         const r = rooms.get(String(m.code ?? '').trim());
         if (!r) return send(ws, { t: 'error', msg: 'Lobby não encontrado. Confere o código.' });
-        if (r.players.length >= MAX_PLAYERS) return send(ws, { t: 'error', msg: 'Lobby cheio (máx. 4).' });
+        if (r.players.length >= MAX_PLAYERS) return send(ws, { t: 'error', msg: `Lobby cheio (máx. ${MAX_PLAYERS}).` });
         if (r.phase !== 'lobby') return send(ws, { t: 'error', msg: 'Esse lobby já começou. Espera acabar a corrida.' });
         join(r, m.name);
         return;

@@ -31,6 +31,8 @@ cd senai-rush-netlify && python3 -m http.server 8000
 
 For a version that opens by double-click (`file://`), `python3 tools/build-offline.py` bundles the build into one self-contained `senai-rush-offline/index.html` (esbuild IIFE + inlined CSS/fonts/images). Re-run it after any change to `senai-rush-netlify/`.
 
+Racer face photos: `python3 tools/make-face.py <photo> <character-id> [--box x0,y0,x1,y1]` writes `senai-rush-netlify/assets/<id>-face.webp` (512×660, oval cut-out). `isaac-face.webp` is optional: the kart model falls back to the plain head when it is missing.
+
 Deploy = upload `senai-rush-netlify/` as-is (all paths in `index.html` are relative `./`).
 
 ## Bundle architecture
