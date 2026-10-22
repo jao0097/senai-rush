@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Turn a photo into a racer face texture (512x660 WebP, soft oval cut-out).
 
-Usage: python3 tools/make-face.py <photo> <character-id> [--box x0,y0,x1,y1]
+Usage: python3 tools/make-face.py <photo> <character-id> [--box x0,y0,x1,y1] [--smooth]
 Example: python3 tools/make-face.py ~/isaac.jpg isaac --box 125,100,315,360
 
 --box is the head (hair to chin) in photo pixels; without it a centred box in
@@ -22,6 +22,7 @@ def main() -> None:
     ap.add_argument("photo")
     ap.add_argument("id")
     ap.add_argument("--box", help="x0,y0,x1,y1 of the head in the photo")
+    ap.add_argument("--smooth", action="store_true", help="denoise grainy phone photos")
     args = ap.parse_args()
 
     img = ImageOps.exif_transpose(Image.open(args.photo)).convert("RGB")
@@ -41,6 +42,8 @@ def main() -> None:
         bh = bw * H / W
     face = img.crop((round(cx - bw / 2), round(cy - bh / 2), round(cx + bw / 2), round(cy + bh / 2)))
     face = face.resize((W, H), Image.LANCZOS)
+    if args.smooth:
+        face = face.filter(ImageFilter.MedianFilter(5)).filter(ImageFilter.SMOOTH_MORE)
     face = ImageOps.autocontrast(face, cutoff=1)
 
     mask = Image.new("L", (W, H), 0)
