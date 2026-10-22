@@ -8,8 +8,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Consequences:
 - There are no build/lint/test commands. Changes must be made directly to the minified bundles, or the original Vite source project must be obtained to rebuild.
-- Asset filenames carry hash suffixes (e.g. `game-HUE3VPRF.js`) and are served as immutable (cached for a year). **After editing any chunk, run `python3 tools/rehash.py`**: it renames all JS chunks to a new suffix and rewrites every reference (other chunks' `import(...)` / `from"./..."`, `index.html`, `online/online.js`). Otherwise returning players keep the stale cached copy.
-- Minified export names (e.g. `import{or as e,sr as t}from"./index-HUE3VPRF.js"`; `online.js` imports `or` = live tuning and `lr` = roster) are mangled cross-chunk bindings; changing an export in one chunk breaks importers.
+- Asset filenames carry hash suffixes (e.g. `game-l52wh14h.js`) and are served as immutable (cached for a year). **After editing any chunk, run `python3 tools/rehash.py`**: it renames all JS chunks to a new suffix and rewrites every reference (other chunks' `import(...)` / `from"./..."`, `index.html`, `online/online.js`). Otherwise returning players keep the stale cached copy.
+- Minified export names (e.g. `import{or as e,sr as t}from"./index-<hash>.js"`; `online.js` imports `or` = live tuning and `lr` = roster) are mangled cross-chunk bindings; changing an export in one chunk breaks importers.
 
 ## Editing workflow
 
