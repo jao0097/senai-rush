@@ -35,7 +35,7 @@ const HUMAN_SLOTS = [3, 2, 4, 5, 1, 6, 0, 7];
 
 // Shared game data from the entry chunk: same URL as index.html's script, so
 // this resolves to the already-loaded module instance (tuning + roster).
-const core = import('../assets/index-BgxqOEwe.js').then((m) => ({ tuning: m.or, roster: m.lr }));
+const core = import('../assets/index-l52wh14h.js').then((m) => ({ tuning: m.or, roster: m.lr }));
 
 const $ = (s) =>
   String(s ?? '').replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);

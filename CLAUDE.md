@@ -8,16 +8,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Consequences:
 - There are no build/lint/test commands. Changes must be made directly to the minified bundles, or the original Vite source project must be obtained to rebuild.
-- Asset filenames carry Vite content hashes (e.g. `game-BVaTPfK4.js`). If you rename a chunk, update every reference to it — in `index.html` and in the `import(...)` / `from"./..."` strings inside other chunks.
-- Minified export names (e.g. `import{or as e,sr as t}from"./index-BgxqOEwe.js"`) are mangled cross-chunk bindings; changing an export in one chunk breaks importers.
+- Asset filenames carry hash suffixes (e.g. `game-l52wh14h.js`) and are served as immutable (cached for a year). **After editing any chunk, run `python3 tools/rehash.py`**: it renames all JS chunks to a new suffix and rewrites every reference (other chunks' `import(...)` / `from"./..."`, `index.html`, `online/online.js`). Otherwise returning players keep the stale cached copy.
+- Minified export names (e.g. `import{or as e,sr as t}from"./index-<hash>.js"`; `online.js` imports `or` = live tuning and `lr` = roster) are mangled cross-chunk bindings; changing an export in one chunk breaks importers.
 
 ## Editing workflow
 
-Readable (prettier-formatted) copies of `game`, `index` and `kartModel` live in `.work/`. Edit those, then minify back into the build under the same filename:
+Readable (prettier-formatted) copies of chunks can be kept in `.work/` (gitignored; regenerate with `npx -y prettier@3`). Edit those, then minify back into the build under the same filename, then run `python3 tools/rehash.py`:
 
 ```
-cd .work && npx -y esbuild@0.24 game-BVaTPfK4.js --minify --format=esm --target=es2022 --outfile=../senai-rush-netlify/assets/game-BVaTPfK4.js
+cd .work && npx -y esbuild@0.24 game-<hash>.js --minify --format=esm --target=es2022 --outfile=../senai-rush-netlify/assets/game-<hash>.js
 ```
+
+Small edits can also be done directly on the minified file with an exact string replace (check with `npx esbuild <file> --format=esm`).
 
 `.work/pw/r.mjs` is a headless Playwright smoke test (menu → race, screenshots, console errors) against a local server on port 8765. The untouched original build is in `senai-rush-netlify.backup/`.
 
